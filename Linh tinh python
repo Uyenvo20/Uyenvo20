@@ -1,0 +1,37 @@
+cursor = conn.cursor()
+
+query = """
+    SELECT 
+	DATE(OD.C_TIME) as date_order,
+	'WEBLIME' AS store,
+	OD.PRD_CODE AS pfcode,
+	S.NBDB AS nbdb,
+	PM.IMP_PRICE AS tag_price,
+	SUM(OD.SALE_PRICE*OD.ORD_QTY)/NULLIF(SUM(OD.ORD_QTY),0) AS sale_price,
+	SUM(OD.ORD_QTY) AS qty,
+	SUM(OD.ORD_QTY*OD.SALE_PRICE) AS total_amount
+FROM TBL_ORD_MAIN OM
+	LEFT JOIN TBL_ORD_DETAIL OD ON OD.ORD_CODE=OM.ORD_CODE
+	LEFT JOIN TBL_PRD_MAIN PM ON OD.PRD_CODE=PM.PRD_CODE
+	LEFT JOIN 
+		(SELECT 
+			OD.PRD_CODE AS pfcode,
+			MIN(DATE(OD.C_TIME)) AS NBDB
+		FROM TBL_ORD_MAIN OM
+			LEFT JOIN TBL_ORD_DETAIL OD ON OD.ORD_CODE=OM.ORD_CODE
+		GROUP BY OD.PRD_CODE) AS S ON S.pfcode=OD.PRD_CODE
+WHERE OM.ORD_STATUS != 61
+    AND DATE(OD.C_TIME) >= '2023-06-01'
+GROUP BY 
+	date_order,
+	store,
+	OD.PRD_CODE,
+	S.NBDB,
+	tag_price"""
+
+cursor.execute(query)
+pf = cursor.fetchall()  # Assuming you want to fetch all the results
+    
+column_names = [name[0] for name in cursor.description]
+df = pd.DataFrame(pf,columns=column_names)
+print(df)
