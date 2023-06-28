@@ -1,0 +1,88 @@
+cursor = conn.cursor()
+
+query = """
+	WITH xuat AS
+	(SELECT
+		TO_CHAR(sml.date + '7 hour','YYYY-MM') AS "month",
+		pt.name AS pfcode,
+		pp.id,
+		SUM(sml.qty_done) AS qty_export
+	FROM stock_move_line sml
+		LEFT JOIN stock_location sl ON sml.location_dest_id=sl.id
+		LEFT JOIN stock_picking sp ON sml.picking_id=sp.id
+		LEFT JOIN product_product pp ON sml.product_id=pp.id
+		LEFT JOIN product_template pt ON pp.product_tmpl_id=pt.id
+	WHERE sml.location_dest_id IN ('3823','8') -- địa điểm đích là kho xử lý và vendor
+		AND sml.location_id  IN ('3835','1') -- địa điểm nguồn là Kho tổng
+		AND sml.state = 'done'
+	GROUP BY 
+		TO_CHAR(sml.date + '7 hour','YYYY-MM'),
+		pt.name,
+		pp.id),
+
+	--phân loại sản phẩm
+	phanloai AS
+		(SELECT
+			CASE 
+				WHEN pt.c1name IN ('AO KHOAC', 'AO VEST') THEN '1. ÁO KHOÁC'
+				WHEN pt.c1name IN ('AO KIEU','AO COUPLE','AO TAY NGAN','AO THUN','POLO') THEN '2. ÁO THUN'
+				WHEN pt.c1name LIKE 'QUAN%' THEN '3. QUẦN'
+				WHEN pt.c1name IN ('VAY') THEN '4. VÁY'
+				WHEN pt.c1name IN ('AO SO MI') THEN '5. ÁO SƠ MI'
+				WHEN pt.c1name IN ('AO DAM') THEN '6. ÁO ĐẦM'
+				ELSE '7. KHÁC'
+				END AS cat,
+			CASE WHEN pt.default_code IN ('LM21161001','LM21162001','LO21161001','LO21162002') THEN 'BASIC PLUS 2' ELSE pg.name END AS collection,
+			pt.name pfcode,
+			pp.id
+		FROM product_product pp 
+			LEFT JOIN product_template pt ON pt.id=pp.product_tmpl_id
+			LEFT JOIN
+				(SELECT *
+					FROM product_attribute_value_product_product_rel pr
+					LEFT JOIN product_attribute_value av ON pr.product_attribute_value_id = av.id
+					WHERE av.attribute_id = 8) pg ON pg.product_product_id=pp.id
+		WHERE pp.active = true
+			AND pt.active = true)
+
+	SELECT
+			TO_CHAR(sml.date + '7 hour','YYYY-MM') AS "month",
+			DATE(sml.date + '7 hour') AS DATE,
+			phanloai.cat AS categories,
+			phanloai.collection,
+			pt.name AS pfcode,
+            SPLIT_PART(pt.name,'-',1) AS default_code,
+			SPLIT_PART(pt.name,'-',2) AS color,
+			SPLIT_PART(pt.name,'-',3) AS size,
+			SUM(sml.qty_done) AS qty_import,
+			x.qty_export,
+			(SUM(sml.qty_done)- (CASE WHEN x.qty_export IS NULL THEN 0 ELSE x.qty_export END)) AS total_qty_in,
+			TO_CHAR(sml.date + '7 hour','DD-MM-YYYY') AS date_format
+		FROM stock_move_line sml
+			LEFT JOIN stock_location sl ON sml.location_dest_id=sl.id
+			LEFT JOIN stock_picking sp ON sml.picking_id=sp.id
+			LEFT JOIN product_product pp ON sml.product_id=pp.id
+			LEFT JOIN product_template pt ON pp.product_tmpl_id=pt.id
+			LEFT JOIN phanloai ON phanloai.id=pp.id
+			FULL JOIN xuat x ON x."month"=TO_CHAR(sml.date + '7 hour','YYYY-MM') AND x.id=pp.id
+		WHERE sml.location_dest_id IN ('3835','1') -- địa điểm đích là kho tổng
+			AND sml.location_id IN ('8','3823') -- địa điểm nguồn là vendor, kho xử lý
+			AND sml.state = 'done'
+		GROUP BY 
+			TO_CHAR(sml.date + '7 hour','YYYY-MM'),
+			DATE(sml.date + '7 hour'),
+			pt.name,
+			qty_export,
+			phanloai.cat,
+			phanloai.collection,
+			TO_CHAR(sml.date + '7 hour','DD-MM-YYYY')
+		ORDER BY "month" DESC """
+	
+cursor.execute(query)
+
+results = cursor.fetchall()
+column_names = [name[0] for name in cursor.description]
+
+import_data = pd.DataFrame(results, columns = column_names)
+Test.clear()
+gd.set_with_dataframe(Test, import_data)
